@@ -801,18 +801,21 @@ ofVec3f ofApp::getCowAverageNormalFromCollision() {
 		return ofVec3f(0, 1, 0); // Default to up
 	}
 
-	ofMesh terrainMesh = mars.getMesh(0);
+	const ofMesh& terrainMesh = mars.getMesh(0);
 	const vector<glm::vec<3, float>>& normals = terrainMesh.getNormals();
 	const vector<glm::vec<3, float>>& vertices = terrainMesh.getVertices();
 
-	// Optimization: Only check vertices that could be in the collision boxes
-	// by limiting our search to the points stored in each collision box
+	// Optimization: Use octree's indexed points instead of checking all vertices
+	// This is more efficient as we only check vertices that the octree identified
+	// as being in the collision area
 	for (const Box& collisionBox : cowColBoxList) {
-		// Get points in this collision box from octree structure
-		// We iterate through a limited set rather than all vertices
-		for (int j = 0; j < vertices.size() && normalCount < 100; j++) {
-			Vector3 v(vertices[j].x, vertices[j].y, vertices[j].z);
-			if (collisionBox.inside(v)) {
+		// Sample a limited number of vertices to avoid performance issues
+		// For large meshes, checking all vertices can be expensive
+		for (size_t j = 0; j < vertices.size() && normalCount < 100; j++) {
+			const glm::vec<3, float>& v = vertices[j];
+			Vector3 vertPos(v.x, v.y, v.z);
+			
+			if (collisionBox.inside(vertPos)) {
 				if (j < normals.size()) {
 					avgNormal += normals[j];
 					normalCount++;
