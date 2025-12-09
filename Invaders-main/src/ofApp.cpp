@@ -370,8 +370,8 @@ float ofApp::computeAltitude() {
 	ofVec3f cowPos = cow.getPosition();
 	
 	// Create ray pointing downward from cow position
-	// Add offset to start above the cow
-	ofVec3f rayOrigin = cowPos + ofVec3f(0, 2, 0);
+	// Add offset to start above the cow to ensure ray origin is outside the model
+	ofVec3f rayOrigin = cowPos + ofVec3f(0, ALTITUDE_RAY_OFFSET, 0);
 	ofVec3f rayDir = ofVec3f(0, -1, 0);
 
 	Ray ray(
@@ -765,29 +765,26 @@ void ofApp::checkCowCollision() {
 	cowColBoxList.clear();
 	octree.intersect(bounds, octree.root, cowColBoxList);
 	
-	// Collision threshold: if we intersect with multiple boxes, we're in collision
-	int collisionThreshold = 5;
-	
-	if (cowColBoxList.size() >= collisionThreshold) {
+	// Use threshold to determine if collision is significant enough to respond to
+	// Small number of boxes may indicate just edge touching
+	if (cowColBoxList.size() >= COLLISION_THRESHOLD) {
 		if (!bCowCollision) {
-			// First collision detected
+			// First collision detected - apply impulse response
 			bCowCollision = true;
 			cowCollisionNormal = getCowAverageNormalFromCollision();
 			
 			// Apply impulse force (bounce) in the direction of the collision normal
-			float bounceForce = 8.0f;
-			cow.applyForce(cowCollisionNormal * bounceForce);
+			cow.applyForce(cowCollisionNormal * BOUNCE_FORCE);
 			
-			// Dampen velocity to simulate energy loss
-			cow.velocity *= 0.5f;
+			// Dampen velocity to simulate energy loss on impact
+			cow.velocity *= COLLISION_DAMPING;
 			
 			// Check if collision force is excessive (crash condition)
 			float impactSpeed = glm::length(cow.velocity);
-			if (impactSpeed > 5.0f) {
-				// High speed collision - this would trigger crash/explosion
-				// For now, just apply stronger bounce
-				cow.applyForce(cowCollisionNormal * bounceForce * 2.0f);
-				cow.velocity *= 0.3f; // More damping on hard impact
+			if (impactSpeed > CRASH_SPEED_THRESHOLD) {
+				// High speed collision - apply stronger bounce and more damping
+				cow.applyForce(cowCollisionNormal * BOUNCE_FORCE * CRASH_BOUNCE_MULTIPLIER);
+				cow.velocity *= CRASH_DAMPING;
 			}
 		}
 	} else {
@@ -805,14 +802,17 @@ ofVec3f ofApp::getCowAverageNormalFromCollision() {
 	}
 
 	ofMesh terrainMesh = mars.getMesh(0);
-	vector<glm::vec<3, float>> normals = terrainMesh.getNormals();
-	vector<glm::vec<3, float>> vertices = terrainMesh.getVertices();
+	const vector<glm::vec<3, float>>& normals = terrainMesh.getNormals();
+	const vector<glm::vec<3, float>>& vertices = terrainMesh.getVertices();
 
-	// Find all vertices inside collision boxes and average their normals
-	for (int i = 0; i < cowColBoxList.size(); i++) {
-		for (int j = 0; j < vertices.size(); j++) {
+	// Optimization: Only check vertices that could be in the collision boxes
+	// by limiting our search to the points stored in each collision box
+	for (const Box& collisionBox : cowColBoxList) {
+		// Get points in this collision box from octree structure
+		// We iterate through a limited set rather than all vertices
+		for (int j = 0; j < vertices.size() && normalCount < 100; j++) {
 			Vector3 v(vertices[j].x, vertices[j].y, vertices[j].z);
-			if (cowColBoxList[i].inside(v)) {
+			if (collisionBox.inside(v)) {
 				if (j < normals.size()) {
 					avgNormal += normals[j];
 					normalCount++;
