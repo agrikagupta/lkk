@@ -105,5 +105,12 @@ public:
 	bool hasAltitudeHit;
 	float computeAltitude();
 
+	// Cow collision detection
+	vector<Box> cowColBoxList;
+	bool bCowCollision;
+	ofVec3f cowCollisionNormal;
+	void checkCowCollision();
+	ofVec3f getCowAverageNormalFromCollision();
+
 	ofSoundPlayer bgm;
 };

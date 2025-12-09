@@ -31,6 +31,11 @@ void ofApp::setup()
 	collisionBoxCount = 0;
 	lastValidPosition = ofVec3f(0, 0, 0);
 	collisionNormal = ofVec3f(0, 1, 0);
+	
+	// Initialize cow collision
+	bCowCollision = false;
+	cowCollisionNormal = ofVec3f(0, 1, 0);
+	
 	backgroundImage.load("images/sky.jpg");
 	bTimingInfo = false;
 	lastTreeBuildTime = 0;
@@ -116,6 +121,8 @@ void ofApp::update() {
 	// Camera
 	cowTarget.setTarget(cow.getPosition());
 
+	// Check for collision with terrain
+	checkCowCollision();
 
 	// COLLISION LOGIC - NEEDS TO BE IMPLEMENTED IN COW SPACE
 	/* if (bLanderLoaded)
@@ -308,6 +315,15 @@ void ofApp::draw()
 	if (bTerrainSelected)
 		drawAxis(ofVec3f(0, 0, 0));
 
+	// Draw cow collision boxes for debugging
+	if (bCowCollision && cowColBoxList.size() > 0) {
+		ofNoFill();
+		ofSetColor(ofColor::red);
+		for (int i = 0; i < cowColBoxList.size(); i++) {
+			Octree::drawBox(cowColBoxList[i]);
+		}
+	}
+
 	// recursively draw octree
 	//
 	ofDisableLighting();
@@ -340,18 +356,22 @@ void ofApp::draw()
 		ofDrawBitmapStringHighlight("Altitude: N/A",
 									20, 50);
 	}
+	
+	// Display collision status
+	if (bCowCollision) {
+		ofSetColor(ofColor::red);
+		ofDrawBitmapStringHighlight("COLLISION DETECTED - " + ofToString(cowColBoxList.size()) + " boxes", 20, 70);
+	}
+	ofSetColor(255);
 }
 
 float ofApp::computeAltitude() {
-	// NEEDS TO BE REWRITTEN IN COWSPACE
-	/* if (!bLanderLoaded)
-	{
-		hasAltitudeHit = false;
-		return 0.0f;
-	}*/
-
-	ofVec3f landerPos = lander.getPosition();
-	ofVec3f rayOrigin = landerPos + ofVec3f(0, 50, 0);
+	// Get cow position
+	ofVec3f cowPos = cow.getPosition();
+	
+	// Create ray pointing downward from cow position
+	// Add offset to start above the cow
+	ofVec3f rayOrigin = cowPos + ofVec3f(0, 2, 0);
 	ofVec3f rayDir = ofVec3f(0, -1, 0);
 
 	Ray ray(
@@ -366,6 +386,7 @@ float ofApp::computeAltitude() {
 		return 0.0f;
 	}
 
+	// Find the highest point (closest to spacecraft) in the intersected node
 	float maxY = -std::numeric_limits<float>::infinity();
 	ofVec3f groundPoint;
 
@@ -376,8 +397,11 @@ float ofApp::computeAltitude() {
 			groundPoint = v;
 		}
 	}
-	float landerBottomY = lander.getSceneMin().y + landerPos.y;
-	float altitude = landerBottomY - groundPoint.y;
+	
+	// Calculate altitude from bottom of cow model to ground point
+	ofVec3f cowMin = cow.model.getSceneMin();
+	float cowBottomY = cowPos.y + cowMin.y;
+	float altitude = cowBottomY - groundPoint.y;
 
 	hasAltitudeHit = true;
 	return altitude;
@@ -726,4 +750,83 @@ glm::vec3 ofApp::getMousePointOnPlane(glm::vec3 planePt, glm::vec3 planeNorm)
 	}
 	else
 		return glm::vec3(0, 0, 0);
+}
+
+// Check for collision between Cow spacecraft and terrain using octree
+void ofApp::checkCowCollision() {
+	// Get cow bounding box
+	glm::vec3 cowPos = cow.getPosition();
+	glm::vec3 min = cow.model.getSceneMin() + cowPos;
+	glm::vec3 max = cow.model.getSceneMax() + cowPos;
+	
+	Box bounds = Box(Vector3(min.x, min.y, min.z), Vector3(max.x, max.y, max.z));
+	
+	// Check for intersection with octree
+	cowColBoxList.clear();
+	octree.intersect(bounds, octree.root, cowColBoxList);
+	
+	// Collision threshold: if we intersect with multiple boxes, we're in collision
+	int collisionThreshold = 5;
+	
+	if (cowColBoxList.size() >= collisionThreshold) {
+		if (!bCowCollision) {
+			// First collision detected
+			bCowCollision = true;
+			cowCollisionNormal = getCowAverageNormalFromCollision();
+			
+			// Apply impulse force (bounce) in the direction of the collision normal
+			float bounceForce = 8.0f;
+			cow.applyForce(cowCollisionNormal * bounceForce);
+			
+			// Dampen velocity to simulate energy loss
+			cow.velocity *= 0.5f;
+			
+			// Check if collision force is excessive (crash condition)
+			float impactSpeed = glm::length(cow.velocity);
+			if (impactSpeed > 5.0f) {
+				// High speed collision - this would trigger crash/explosion
+				// For now, just apply stronger bounce
+				cow.applyForce(cowCollisionNormal * bounceForce * 2.0f);
+				cow.velocity *= 0.3f; // More damping on hard impact
+			}
+		}
+	} else {
+		bCowCollision = false;
+	}
+}
+
+// Calculate average normal from collision boxes for realistic bounce direction
+ofVec3f ofApp::getCowAverageNormalFromCollision() {
+	ofVec3f avgNormal(0, 0, 0);
+	int normalCount = 0;
+
+	if (cowColBoxList.size() == 0) {
+		return ofVec3f(0, 1, 0); // Default to up
+	}
+
+	ofMesh terrainMesh = mars.getMesh(0);
+	vector<glm::vec<3, float>> normals = terrainMesh.getNormals();
+	vector<glm::vec<3, float>> vertices = terrainMesh.getVertices();
+
+	// Find all vertices inside collision boxes and average their normals
+	for (int i = 0; i < cowColBoxList.size(); i++) {
+		for (int j = 0; j < vertices.size(); j++) {
+			Vector3 v(vertices[j].x, vertices[j].y, vertices[j].z);
+			if (cowColBoxList[i].inside(v)) {
+				if (j < normals.size()) {
+					avgNormal += normals[j];
+					normalCount++;
+				}
+			}
+		}
+	}
+
+	if (normalCount > 0) {
+		avgNormal /= normalCount;
+		avgNormal.normalize();
+	} else {
+		avgNormal = ofVec3f(0, 1, 0); // Default to up if no normals found
+	}
+
+	return avgNormal;
 }
