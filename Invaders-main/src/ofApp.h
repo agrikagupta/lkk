@@ -105,5 +105,21 @@ public:
 	bool hasAltitudeHit;
 	float computeAltitude();
 
+	// Cow collision detection
+	vector<Box> cowColBoxList;
+	bool bCowCollision;
+	ofVec3f cowCollisionNormal;
+	void checkCowCollision();
+	ofVec3f getCowAverageNormalFromCollision();
+	
+	// Collision physics parameters
+	static constexpr int COLLISION_THRESHOLD = 5;
+	static constexpr float BOUNCE_FORCE = 8.0f;
+	static constexpr float COLLISION_DAMPING = 0.5f;
+	static constexpr float CRASH_SPEED_THRESHOLD = 5.0f;
+	static constexpr float CRASH_BOUNCE_MULTIPLIER = 2.0f;
+	static constexpr float CRASH_DAMPING = 0.3f;
+	static constexpr float ALTITUDE_RAY_OFFSET = 2.0f;
+
 	ofSoundPlayer bgm;
 };
