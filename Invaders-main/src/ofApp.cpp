@@ -26,6 +26,8 @@ void ofApp::setup()
 	bCtrlKeyDown = false;
 	bTerrainSelected = true;
 
+	currentCam = CAM_EASYCAM;
+
 	bCollisionResolution = false;
 	bInCollision = false;
 	collisionBoxCount = 0;
@@ -213,6 +215,7 @@ void ofApp::draw()
 		break;
 	case CAM_COWTARGET:
 		activeCam = &cowTarget;
+		break;
 	}
 
 	if (activeCam)
