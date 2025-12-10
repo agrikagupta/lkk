@@ -59,7 +59,7 @@ void ofApp::setup()
 	cow.setup();
 
 	mars.load("geo/finalterrain.obj");
-	//mars.load("geo/test.obj");
+	// mars.load("geo/test.obj");
 	money1.load("moneybag/moneybag.fbx");
 	money2.load("moneybag/moneybag.fbx");
 	money3.load("moneybag/moneybag.fbx");
@@ -107,15 +107,19 @@ void ofApp::setup()
 }
 
 //--------------------------------------------------------------
-void ofApp::update() {
+void ofApp::update()
+{
 	bgm.setVolume(bgmvol);
 
 	// === COW ===
 	cow.update();
+	particles.update();
 
 	// Camera
 	cowTarget.setTarget(cow.getPosition());
 
+	checkCowCollision();
+	landerAltitude = computeAltitude();
 
 	// COLLISION LOGIC - NEEDS TO BE IMPLEMENTED IN COW SPACE
 	/* if (bLanderLoaded)
@@ -303,7 +307,7 @@ void ofApp::draw()
 			}
 		}}*/
 
-		//ofDisableAlphaBlending();
+	// ofDisableAlphaBlending();
 
 	if (bTerrainSelected)
 		drawAxis(ofVec3f(0, 0, 0));
@@ -342,17 +346,15 @@ void ofApp::draw()
 	}
 }
 
-float ofApp::computeAltitude() {
-	// NEEDS TO BE REWRITTEN IN COWSPACE
-	/* if (!bLanderLoaded)
-	{
-		hasAltitudeHit = false;
-		return 0.0f;
-	}*/
+float ofApp::computeAltitude()
+{
+	// Cow position
+	ofVec3f cowPos = cow.getPosition();
 
-	ofVec3f landerPos = lander.getPosition();
-	ofVec3f rayOrigin = landerPos + ofVec3f(0, 50, 0);
-	ofVec3f rayDir = ofVec3f(0, -1, 0);
+	// Start ray slightly above the cow
+	const float ALTITUDE_RAY_OFFSET = 10.0f;
+	ofVec3f rayOrigin = cowPos + ofVec3f(0, ALTITUDE_RAY_OFFSET, 0);
+	ofVec3f rayDir = ofVec3f(0, -1, 0); // straight down
 
 	Ray ray(
 		Vector3(rayOrigin.x, rayOrigin.y, rayOrigin.z),
@@ -361,23 +363,31 @@ float ofApp::computeAltitude() {
 	TreeNode hitNode;
 	bool hit = octree.intersect(ray, octree.root, hitNode);
 
-	if (!hit || hitNode.points.size() == 0) {
+	if (!hit || hitNode.points.empty())
+	{
 		hasAltitudeHit = false;
 		return 0.0f;
 	}
 
+	// Find the *highest* terrain vertex in that node (max y)
 	float maxY = -std::numeric_limits<float>::infinity();
 	ofVec3f groundPoint;
 
-	for (int idx : hitNode.points) {
+	for (int idx : hitNode.points)
+	{
 		ofVec3f v = octree.mesh.getVertex(idx);
-		if (v.y > maxY) {
+		if (v.y > maxY)
+		{
 			maxY = v.y;
 			groundPoint = v;
 		}
 	}
-	float landerBottomY = lander.getSceneMin().y + landerPos.y;
-	float altitude = landerBottomY - groundPoint.y;
+
+	// Cow bottom= cow position + sceneMin.y
+	ofVec3f cowMin = cow.model.getSceneMin();
+	float cowBottomY = cowPos.y + cowMin.y;
+
+	float altitude = cowBottomY - groundPoint.y;
 
 	hasAltitudeHit = true;
 	return altitude;
@@ -412,7 +422,8 @@ void ofApp::drawAxis(ofVec3f location)
 void ofApp::keyPressed(int key)
 {
 
-	switch (key) {
+	switch (key)
+	{
 	case 'F':
 	case 'f':
 		ofToggleFullscreen();
@@ -502,7 +513,6 @@ void ofApp::keyReleased(int key)
 	case 'a':
 		cow.a = false;
 		break;
-
 	}
 }
 
@@ -536,12 +546,15 @@ void ofApp::mousePressed(int x, int y, int button)
 	Box bounds = Box(Vector3(min.x, min.y, min.z), Vector3(max.x, max.y, max.z));
 	bool hit = bounds.intersect(Ray(Vector3(origin.x, origin.y, origin.z), Vector3(mouseDir.x, mouseDir.y, mouseDir.z)), 0, 10000);
 
-	if (hit && cow.isSelectable) {
+	if (hit && cow.isSelectable)
+	{
 		cow.beingSelected = true;
 		mouseDownPos = getMousePointOnPlane(cow.getPosition(), cam.getZAxis());
 		mouseLastPos = mouseDownPos;
 		cow.beingDragged = true;
-	} else {
+	}
+	else
+	{
 		cow.beingSelected = false;
 	}
 }
@@ -555,7 +568,8 @@ void ofApp::mouseDragged(int x, int y, int button)
 	if (cam.getMouseInputEnabled())
 		return;
 
-	if (cow.beingDragged) {
+	if (cow.beingDragged)
+	{
 		glm::vec3 cowPos = cow.getPosition();
 		glm::vec3 mousePos = getMousePointOnPlane(cowPos, cam.getZAxis());
 		glm::vec3 delta = mousePos - mouseLastPos;
@@ -726,4 +740,131 @@ glm::vec3 ofApp::getMousePointOnPlane(glm::vec3 planePt, glm::vec3 planeNorm)
 	}
 	else
 		return glm::vec3(0, 0, 0);
+}
+
+void ofApp::checkCowCollision()
+{
+	// Build cow bounding box from model scene bounds + current position
+	glm::vec3 cowPos = cow.getPosition();
+	glm::vec3 min = cow.model.getSceneMin() + cowPos;
+	glm::vec3 max = cow.model.getSceneMax() + cowPos;
+
+	Box bounds(
+		Vector3(min.x, min.y, min.z),
+		Vector3(max.x, max.y, max.z));
+
+	// Find terrain boxes intersecting the cow's AABB
+	cowColBoxList.clear();
+	octree.intersect(bounds, octree.root, cowColBoxList);
+
+	if (cowColBoxList.empty())
+	{
+		bCowCollision = false;
+		return;
+	}
+
+	bCowCollision = true;
+
+	// --- Get average collision normal ---
+	ofVec3f avgNormalOF = getCowAverageNormalFromCollision();
+	glm::vec3 n(avgNormalOF.x, avgNormalOF.y, avgNormalOF.z);
+
+	if (glm::length(n) < 0.0001f)
+	{
+		n = glm::vec3(0, 1, 0);
+	}
+	else
+	{
+		n = glm::normalize(n);
+	}
+
+	cowCollisionNormal.set(n.x, n.y, n.z);
+
+	// --- Impact speed and normal component ---
+	glm::vec3 v = cow.velocity;
+	float speed = glm::length(v);
+	float vn = glm::dot(v, n); // < 0 means moving INTO the terrain
+
+	lastImpactSpeed = speed;
+
+	// === Crash condition ===
+	// Uses your existing CRASH_SPEED_THRESHOLD constant.
+	if (speed > CRASH_SPEED_THRESHOLD && vn < 0.0f)
+	{
+		// Stop motion
+		cow.velocity = glm::vec3(0);
+		// (if you have acceleration exposed, also zero it)
+		// cow.acceleration = glm::vec3(0);
+
+		// Spawn explosion at cow position (tune params as needed)
+		particles.emit(cow.getPosition(), 60, 1.2f, true);
+
+		std::cout << "CRASH! Impact speed = " << speed << std::endl;
+		return;
+	}
+
+	// === Simple bounce response ===
+	if (vn < 0.0f)
+	{
+		// Decompose velocity into normal and tangential components
+		glm::vec3 vN = vn * n; // normal (into surface, negative)
+		glm::vec3 vT = v - vN; // tangential
+
+		// Restitution < 1.0 gives a little bounce
+		const float restitution = 0.5f; // tweak 0.3–0.8
+		glm::vec3 newV = vT - vN * restitution;
+
+// Optional extra damping for stability (uses your macro if defined)
+#ifdef COLLISION_DAMPING
+		newV *= COLLISION_DAMPING;
+#else
+		newV *= 0.9f;
+#endif
+
+		cow.velocity = newV;
+	}
+}
+
+ofVec3f ofApp::getCowAverageNormalFromCollision()
+{
+	ofVec3f avgNormal(0, 0, 0);
+	int normalCount = 0;
+
+	if (cowColBoxList.empty())
+	{
+		return ofVec3f(0, 1, 0); // default up
+	}
+
+	ofMesh terrainMesh = mars.getMesh(0);
+	vector<glm::vec3> normals = terrainMesh.getNormals();
+	vector<glm::vec3> vertices = terrainMesh.getVertices();
+
+	// For each collision box, check which mesh vertices lie inside and accumulate normals
+	for (Box &collisionBox : cowColBoxList)
+	{
+		for (int j = 0; j < (int)vertices.size() && normalCount < 100; ++j)
+		{
+			Vector3 v(vertices[j].x, vertices[j].y, vertices[j].z);
+			if (collisionBox.inside(v))
+			{
+				if (j < (int)normals.size())
+				{
+					avgNormal += ofVec3f(normals[j].x, normals[j].y, normals[j].z);
+					normalCount++;
+				}
+			}
+		}
+	}
+
+	if (normalCount > 0)
+	{
+		avgNormal /= (float)normalCount;
+		avgNormal.normalize();
+	}
+	else
+	{
+		avgNormal.set(0, 1, 0);
+	}
+
+	return avgNormal;
 }
