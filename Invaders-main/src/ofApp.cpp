@@ -181,9 +181,6 @@ void ofApp::update()
 //--------------------------------------------------------------
 void ofApp::draw()
 {
-	// === COW ===
-	cow.draw();
-
 	// clear screen color & depth
 	ofBackground(ofColor::black);
 
